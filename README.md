@@ -1,470 +1,153 @@
-# scala REST libraries comparison
-
-- [scalatra](#scalatra)
-
-- [play!](#play-framework)
-
-- [finch](#finch)
-
-- [http4s](#http4s)
-
-scalatra
----------
-
-<h4>1) setup/ bootstrap</h4>
-
-- install sbt
-- add scalatra dependency
-- add scalatra-json dependency
-- add json4s dependency
-
-<h4>2) Server backend (to implement HTTP requests and HTTP responses)</h4>
-
-[Jetty](http://scalatra.org/guides/2.5/deployment/standalone.html) - _Eclipse Jetty provides a Web server and javax.servlet container, plus support for HTTP/2, WebSocket etc_
-
-<h4>3) REST API definition/ Routes</h4>
-
-- provides http methods as function. request handler is bit weird as it returns `Any` instead of just `T`. meaning single resource can respond different types. also it should be `action: HttpRequest => [T]`
-
-```scala
-def get(transformers: RouteTransformer*)(action: => Any): Route = addRoute(Get, transformers, action)
-```
-
-- has to read headers/cookies/ request payload etc explicitly inside a action function
-
-example, 
-
-```scala
-import org.scalatra.{AsyncResult, FutureSupport, ScalatraServlet}
-import scala.concurrent.{ExecutionContext, Future}
-import org.json4s.{DefaultFormats, Formats}
-import org.scalatra.json.JacksonJsonSupport
-import org.scalatra.{AsyncResult, FutureSupport, ScalatraServlet}
-import scala.concurrent.ExecutionContext.Implicits
-
-scala> final case class ApiResponse(correlationId: String, message: String)
-defined class ApiResponse
-
-scala> class RestServer extends ScalatraServlet with JacksonJsonSupport with FutureSupport {
-        protected implicit val jsonFormats: Formats = DefaultFormats
-      
-        protected implicit def executor: ExecutionContext = Implicits.global
-      
-        post("/api/chat") {
-          new AsyncResult() {
-            override val is: Future[ApiResponse] = Future {
-            
-              val correlationId = request.getHeader("correlationId")
-              val body = request.body
-              
-              ApiResponse(correlationId, "hi, how can i help ya")
-            }
-          }
-        }
-      }
-defined class RestServer
-
-```
-
-<h4>4) Request validation</h4>
-
-Scalatra includes a very sophisticated set of validation commands.
-
-These allow you to parse incoming data, instantiate command objects, and automatically apply validations to the objects. 
-
-http://scalatra.org/guides/2.3/formats/commands.html
-
-<h4>5) REST Error Handling</h4>
-
-provides generic error handler for response 500 as a partial function
-
-```scala
-
-  final case class ApiError(errorCode: String, errorMessage: String)
-  
-  error {
-    case e: Exception => ApiError("InternalApiError", e.getMessage)
-  }
-  
-  ```
-  
-<h4>6) Request Deserialization/ Response Serialisation</h4>
-
-Uses json4s which default encoders and decoders
-
-http://scalatra.org/guides/2.3/formats/json.html
-
-<h4>7) Exposing API definition</h4>
-
-No a clean way to expose API definition to consumers as headers/ cookies/ req payload are not part of API definition
-
-<h4>8) API http-client</h4>
-
-<h4>9) Performance</h4>
-
-[jetty perf](https://www.techempower.com/benchmarks/#section=data-r15&hw=ph&test=json&l=hra0e7) - 182,147 req/sec
-
-<h4>10) Latency</h4>
-
-jetty - 1.2 ms for above perf
-
-<h4>11) example</h4>
-
-https://github.com/duwamish-os/config-management-ui
-
-play-framework
---------------
-
-<h4>1) setup/ bootstrap</h4>
-
-- install sbt
-- add plugin PlayScala
-- add play-json
-
-<h4>2) Server backend (to implement HTTP requests and HTTP responses)</h4>
-
-- [Akka-HTTP](https://www.playframework.com/documentation/2.6.x/Server)
-- Netty
-
-<h4>3) REST API definition/ Routes</h4>
-
-Two places for endpoint definition. Play provides [routing DSL](https://www.playframework.com/documentation/2.6.x/ScalaSirdRouter) as partial function
-
-```scala
-trait Router {
-  def routes: Router.Routes
-  
-  //
-}
-
-object Router {
-    type Routes = PartialFunction[RequestHeader, Handler]
-}
-```
-
-- has to read headers/cookies/ request payload etc explicitly inside a Handler function
-
-example, 
-
-Endopint routes
-
-```scala
-import api.GameApi
-import play.api.libs.json.Json
-import play.api.mvc.{Action, AnyContent, RequestHeader}
-import play.api.routing._
-import play.api.routing.sird._
-import play.api.mvc._
-
-class ApiRouter extends SimpleRouter {
-
-  override def routes: PartialFunction[RequestHeader, Action[AnyContent]] = {
-    case GET(p"/game/$correlationId") =>
-      Action {
-        Results.Ok(Json.toJson(GameApi.instance.scores(correlationId)))
-      }
-  }
-}
-```
-conf/routes
-
-```
-->      /api                        route.ApiRouter
-```
-
-API
-
-```scala
-import play.api.libs.json.{Json, OWrites, Reads}
-
-final case class ApiResponse(correlationID: String, scores: List[Map[String, String]])
-
-object ApiResponse {
-  implicit val reads: Reads[ApiResponse] = Json.reads[ApiResponse]
-  implicit val writes: OWrites[ApiResponse] = Json.writes[ApiResponse]
-}
-
-class GameApi {
-
-  def scores(correlationId: String): ApiResponse = {
-    val response = ApiResponse(correlationId, List(
-      Map("player" -> "upd",
-        "score" -> "1000"),
-
-      Map("player" -> "dude",
-        "score" -> "999")))
-
-    response
-  }
-
-}
-
-object GameApi {
-  lazy val instance = new GameApi
-}
-```
-
-
-<h4>4) Request validation</h4>
-
-https://www.playframework.com/documentation/2.6.x/ScalaActionsComposition#Validating-requests
-
-
-<h4>5) REST Error Handling</h4>
-
-https://www.playframework.com/documentation/2.6.x/ScalaErrorHandling
-  
-<h4>6) Request Deserialization/ Response Serialisation</h4>
-
-Uses play-json which demands deserializers and serializers for every type
-
-<h4>7) Exposing API definition</h4>
-
-No a clean way to expose API definition to consumers as headers/ cookies/ req payload are not part of API definition
-
-<h4>8) API http-client</h4>
-
-Provides play-ws async http clinet - https://www.playframework.com/documentation/2.6.x/ScalaWS which uses netty-client
-
-<h4>9) Performance</h4>
-
-93,002 req/sec
-
-<h4>10) Latency</h4>
-
-6.3 ms/req
-
-<h4>11) example</h4>
-
-https://github.com/duwamish-os/scala-play-war
-
-
-finch
-------
-
-<h4>1) setup/ bootstrap</h4>
-
-- install sbt
-- add finch-core
-- add finch-circe
-
-<h4>2) Server backend (to implement HTTP requests and HTTP responses)</h4>
-
-- [Netty](https://netty.io/)
-
-_Netty is a NIO client server framework which enables quick and easy development of network applications such as protocol servers and clients. It greatly simplifies and streamlines network programming such as TCP and UDP socket server._
-
-https://blog.twitter.com/engineering/en_us/a/2014/netty-at-twitter-with-finagle.html
-
-<h4>3) REST API definition/ Routes</h4>
-
-provides clean routing API as a function `Input => EndpointResult[T]` - https://finagle.github.io/finch/user-guide.html#understanding-endpoints
-
-```scala
-private[finch] trait EndpointMappers {
-
-  def get[A](e: Endpoint[A]): EndpointMapper[A] = new EndpointMapper[A](Method.Get, e)
-
-  //
-}
-```
-
-example, 
-
-Endopint routes
-
-```scala
-scala> final case class PurchaseRequest(items: List[String])
-defined class PurchaseRequest
-
-scala> final case class PurchaseResponse(correlationId: String)
-defined class PurchaseResponse
-```
-
-```scala
-import com.twitter.finagle.http.{Request, Response}
-import com.twitter.finagle.{Http, Service}
-import com.twitter.util.{Await, Future}
-import io.circe.generic.auto._
-import io.finch._
-import io.finch.circe._
-import io.finch.syntax._
-
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.{Failure, Success}
-import io.finch.syntax.scalaFutures._
-
-scala> object PurchasesServer {
-      
-          val chatEndpoint: Endpoint[PurchaseResponse] = post("api" :: "purchases" :: header[String]("correlationId") :: jsonBody[PurchaseRequest]) {
-            (correlationId: String, purchaseRequest: PurchaseRequest) => {
-      
-              concurrent.Future {
-                PurchaseResponse(correlationId)
-              }.map(Ok)
-      
-            }
-      
-          }
-            
-      }
-defined object PurchasesServer
-```
-
-<h4>4) Request validation</h4>
-
-Provides well designed request validation API
-
-https://finagle.github.io/finch/user-guide.html#validation
-
-```scala
-scala> val purchases = post("api" :: "purchases" :: header[Int]("purchaseId").should("be greater than length 5"){_ > 5})
-purchases: io.finch.syntax.EndpointMapper[Int] = POST /api :: purchases :: header(purchaseId)
-```
-
-<h4>5) REST Error Handling</h4>
-
-Provides error handler (takes partial function) for each API endpoint
-  
-https://finagle.github.io/finch/user-guide.html#errors
-
-<h4>6) Request Deserialization/ Response Serialisation</h4>
-
-Uses circe which provides compile time derivation of deserializers and serializers
-
-Also provides support for other poular functional json libraries - https://finagle.github.io/finch/user-guide.html#json
-
-<h4>7) Exposing API definition</h4>
-
-Headers/Cookies are part of part of API definition. It helps the API definition to be exposed cleanly to the consumers as a jar dependency with small change
-
-<h4>8) API http-client</h4>
-
-Provides featherbed as async http-client - https://finagle.github.io/featherbed/doc/06-building-rest-clients.html 
-
-<h4>9) Performance</h4>
-
-[396,796 req/sec](https://www.techempower.com/benchmarks/#section=data-r15&hw=ph&test=json&l=hr9u67)
-
-<h4>10) Latency</h4>
-
-6.3 ms
-
-<h4>11) example</h4>
-
-https://github.com/duwamish-os/chat-server
-
-
-[http4s](https://github.com/http4s/http4s)
----------
-
-<h4>1) setup/ bootstrap</h4>
-
-- install sbt
-- add http4s-blaze-server dependency
-- add http4s-circe dependency
-- add http4s-dsl dependency
-
-<h4>2) Server backend (to implement HTTP requests and HTTP responses)</h4>
-
-[blaze](https://github.com/http4s/blaze) - _blaze is a scala library for building async pipelines, with a focus on network IO_
-
-netty support is coming on as well - https://github.com/http4s/http4s/pull/1831/
-
-<h4>3) REST API definition/ Routes</h4>
-
-- provides dsl for routes `Http4sDsl`. 
-
-```scala
-object -> {
-  def unapply[F[_]](req: Request[F]): Some[(Method, Path)] =
-    Some((req.method, Path(req.pathInfo)))
-}
-
-case class /(parent: Path, child: String) extends Path {
-  lazy val toList: List[String] = parent.toList ++ List(child)
-
-  def lastOption: Some[String] = Some(child)
-
-  lazy val asString: String = s"$parent/${UrlCodingUtils.pathEncode(child)}"
-
-  override def toString: String = asString
-
-  def startsWith(other: Path): Boolean = {
-    val components = other.toList
-    toList.take(components.length) === components
-  }
-}
-```
-
-- has to read headers/cookies/ request payload etc explicitly inside a match function
-
-example, 
-
-```scala
-
-import cats.effect.IO
-import fs2.StreamApp
-import io.circe._
-import io.circe.generic.auto._
-import io.circe.syntax._
-import org.http4s._
-import org.http4s.circe._
-import org.http4s.dsl.Http4sDsl
-import org.http4s.server.blaze.BlazeBuilder
-import schema.{ChatHistory, ChatRequest, ChatResponse}
-
-
-import scala.concurrent.ExecutionContext.Implicits.global
-
-object RestServer extends StreamApp[IO] with Http4sDsl[IO] {
-
-  val service: HttpService[IO] = HttpService[IO] {
-
-    case req@GET -> Root / "api" / "chat" / "history" / customerID =>
-      val correlationId = req.headers.find(_.name == "correlationId").map(_.value).getOrElse("")
-      Ok(Future(ChatHistory(correlationId, List("hi, how can i help you?", "here is coffee shop"))))
-
-    case request@POST -> Root / "api" / "chat" =>
-      for {
-        chatRequest <- request.as[ChatRequest]
-        chatResponse <- Ok(Future(ChatResponse(chatRequest.correlationId, "Here are near by coffee shops")))
-      } yield chatResponse
-
-  }
-  
-  ///
-}
-```
-
-<h4>6) Request Deserialization/ Response Serialisation</h4>
-
-uses circe so should be able to auto encode/decode. also provides jsonEncoderOf
-
-```scala
-  def jsonEncoderOf[F[_]: EntityEncoder[?[_], String]: Applicative, A](
-      implicit encoder: Encoder[A]): EntityEncoder[F, A] =
-    jsonEncoderWithPrinterOf(defaultPrinter)
-```
-
-https://http4s.org/v0.15/json/
-
-<h4>7) Exposing API definition</h4>
-
-Headers/Cookies are not part of part of API definition. 
-
-<h4>8) API http-client</h4>
-
-maybe https://github.com/http4s/rho
-
-<h4>9) Performance</h4>
-
-[82,652 req/sec](https://www.techempower.com/benchmarks/#section=data-r15&hw=ph&test=json&l=hr9u67)
-
-<h4>10) Latency</h4>
-
-2.3 ms
-
-<h4>11) example</h4>
-
-https://github.com/duwamish-os/http4s-rest-server
+# Agent Frameworks
+
+A curated list of popular **AI agent frameworks and SDKs**, grouped by ecosystem.
+Every entry links to its GitHub repository and shows a **live star badge**.
+
+
+## Contents
+
+- [General-purpose & multi-agent orchestration](#general-purpose--multi-agent-orchestration)
+- [Autonomous "AutoGPT-style" agents](#autonomous-autogpt-style-agents)
+- [Low-code & visual builders](#low-code--visual-builders)
+- [JavaScript / TypeScript](#javascript--typescript)
+- [JVM (Java / Kotlin)](#jvm-java--kotlin)
+- [Go](#go)
+- [Rust](#rust)
+- [Coding agents](#coding-agents)
+- [Browser & computer use](#browser--computer-use)
+- [Voice & real-time](#voice--real-time)
+- [Agent infrastructure (tools · memory · sandboxes)](#agent-infrastructure-tools--memory--sandboxes)
+
+---
+
+## General-purpose & multi-agent orchestration
+
+| Framework | Stars | Lang | What it is |
+| --- | --- | --- | --- |
+| [LangChain](https://github.com/langchain-ai/langchain) | ![](https://img.shields.io/github/stars/langchain-ai/langchain?style=flat-square) | Python | Composable framework for LLM apps with a huge tool/integration ecosystem |
+| [LangGraph](https://github.com/langchain-ai/langgraph) | ![](https://img.shields.io/github/stars/langchain-ai/langgraph?style=flat-square) | Python | Stateful, graph-based multi-agent orchestration with human-in-the-loop |
+| [LlamaIndex](https://github.com/run-llama/llama_index) | ![](https://img.shields.io/github/stars/run-llama/llama_index?style=flat-square) | Python | Data framework for RAG and agentic workflows |
+| [Microsoft AutoGen](https://github.com/microsoft/autogen) | ![](https://img.shields.io/github/stars/microsoft/autogen?style=flat-square) | Python/.NET | Multi-agent conversation framework |
+| [Semantic Kernel](https://github.com/microsoft/semantic-kernel) | ![](https://img.shields.io/github/stars/microsoft/semantic-kernel?style=flat-square) | C#/Py/Java | Enterprise agent SDK with plugins and invocation filters |
+| [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) | ![](https://img.shields.io/github/stars/microsoft/agent-framework?style=flat-square) | .NET/Python | Unified successor to Semantic Kernel + AutoGen |
+| [CrewAI](https://github.com/crewAIInc/crewAI) | ![](https://img.shields.io/github/stars/crewAIInc/crewAI?style=flat-square) | Python | Role-playing multi-agent "crews" and flows |
+| [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) | ![](https://img.shields.io/github/stars/openai/openai-agents-python?style=flat-square) | Python | Lightweight agents with handoffs and guardrails |
+| [OpenAI Swarm](https://github.com/openai/swarm) | ![](https://img.shields.io/github/stars/openai/swarm?style=flat-square) | Python | Experimental/educational lightweight multi-agent orchestration |
+| [Google ADK](https://github.com/google/adk-python) | ![](https://img.shields.io/github/stars/google/adk-python?style=flat-square) | Python | Google's model-agnostic Agent Development Kit |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai) | ![](https://img.shields.io/github/stars/pydantic/pydantic-ai?style=flat-square) | Python | Type-safe agent framework from the Pydantic team |
+| [Haystack](https://github.com/deepset-ai/haystack) | ![](https://img.shields.io/github/stars/deepset-ai/haystack?style=flat-square) | Python | Production LLM/RAG and agent pipelines (deepset) |
+| [Agno](https://github.com/agno-agi/agno) | ![](https://img.shields.io/github/stars/agno-agi/agno?style=flat-square) | Python | High-performance multi-modal agents (formerly Phidata) |
+| [CAMEL](https://github.com/camel-ai/camel) | ![](https://img.shields.io/github/stars/camel-ai/camel?style=flat-square) | Python | Research framework for multi-agent societies |
+| [DSPy](https://github.com/stanfordnlp/dspy) | ![](https://img.shields.io/github/stars/stanfordnlp/dspy?style=flat-square) | Python | Program (don't prompt) LMs — optimizers and compilers |
+| [smolagents](https://github.com/huggingface/smolagents) | ![](https://img.shields.io/github/stars/huggingface/smolagents?style=flat-square) | Python | Minimal, code-first agents (Hugging Face) |
+| [Letta](https://github.com/letta-ai/letta) | ![](https://img.shields.io/github/stars/letta-ai/letta?style=flat-square) | Python | Stateful agents with long-term memory (formerly MemGPT) |
+| [Langroid](https://github.com/langroid/langroid) | ![](https://img.shields.io/github/stars/langroid/langroid?style=flat-square) | Python | Multi-agent programming framework |
+| [Griptape](https://github.com/griptape-ai/griptape) | ![](https://img.shields.io/github/stars/griptape-ai/griptape?style=flat-square) | Python | Modular agents, pipelines, and workflows |
+| [Marvin](https://github.com/PrefectHQ/marvin) | ![](https://img.shields.io/github/stars/PrefectHQ/marvin?style=flat-square) | Python | Lightweight AI engineering toolkit (Prefect) |
+| [Strands Agents](https://github.com/strands-agents/sdk-python) | ![](https://img.shields.io/github/stars/strands-agents/sdk-python?style=flat-square) | Python | Model-driven agent SDK (AWS) |
+| [Atomic Agents](https://github.com/BrainBlend-AI/atomic-agents) | ![](https://img.shields.io/github/stars/BrainBlend-AI/atomic-agents?style=flat-square) | Python | Lightweight, composable "atomic" building blocks |
+| [AWS Agent Squad](https://github.com/awslabs/agent-squad) | ![](https://img.shields.io/github/stars/awslabs/agent-squad?style=flat-square) | Python/TS | Multi-agent orchestrator (formerly Multi-Agent Orchestrator) |
+| [BeeAI Framework](https://github.com/i-am-bee/beeai-framework) | ![](https://img.shields.io/github/stars/i-am-bee/beeai-framework?style=flat-square) | Python/TS | Production agents (IBM · Linux Foundation) |
+| [Julep](https://github.com/julep-ai/julep) | ![](https://img.shields.io/github/stars/julep-ai/julep?style=flat-square) | Python | Serverless platform + SDK for stateful agents |
+
+## Autonomous "AutoGPT-style" agents
+
+| Framework | Stars | Lang | What it is |
+| --- | --- | --- | --- |
+| [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) | ![](https://img.shields.io/github/stars/Significant-Gravitas/AutoGPT?style=flat-square) | Python | Pioneering autonomous GPT agent platform |
+| [MetaGPT](https://github.com/geekan/MetaGPT) | ![](https://img.shields.io/github/stars/geekan/MetaGPT?style=flat-square) | Python | Multi-agent "software company" framework |
+| [BabyAGI](https://github.com/yoheinakajima/babyagi) | ![](https://img.shields.io/github/stars/yoheinakajima/babyagi?style=flat-square) | Python | Minimal task-driven autonomous agent |
+| [SuperAGI](https://github.com/TransformerOptimus/SuperAGI) | ![](https://img.shields.io/github/stars/TransformerOptimus/SuperAGI?style=flat-square) | Python | Dev-first autonomous agent framework |
+| [AgentGPT](https://github.com/reworkd/AgentGPT) | ![](https://img.shields.io/github/stars/reworkd/AgentGPT?style=flat-square) | TypeScript | Browser-based autonomous agents |
+
+## Low-code & visual builders
+
+| Framework | Stars | Lang | What it is |
+| --- | --- | --- | --- |
+| [Dify](https://github.com/langgenius/dify) | ![](https://img.shields.io/github/stars/langgenius/dify?style=flat-square) | Python/TS | Open-source LLM app & agent platform |
+| [Flowise](https://github.com/FlowiseAI/Flowise) | ![](https://img.shields.io/github/stars/FlowiseAI/Flowise?style=flat-square) | TypeScript | Drag-and-drop LLM/agent builder |
+| [Langflow](https://github.com/langflow-ai/langflow) | ![](https://img.shields.io/github/stars/langflow-ai/langflow?style=flat-square) | Python | Visual builder for agent flows |
+| [n8n](https://github.com/n8n-io/n8n) | ![](https://img.shields.io/github/stars/n8n-io/n8n?style=flat-square) | TypeScript | Workflow automation with native AI agent nodes |
+| [Rivet](https://github.com/Ironclad/rivet) | ![](https://img.shields.io/github/stars/Ironclad/rivet?style=flat-square) | TypeScript | Visual programming environment for AI agents |
+| [Rasa](https://github.com/RasaHQ/rasa) | ![](https://img.shields.io/github/stars/RasaHQ/rasa?style=flat-square) | Python | Open-source conversational AI / assistants |
+
+## JavaScript / TypeScript
+
+| Framework | Stars | What it is |
+| --- | --- | --- |
+| [LangChain.js](https://github.com/langchain-ai/langchainjs) | ![](https://img.shields.io/github/stars/langchain-ai/langchainjs?style=flat-square) | JS/TS port of LangChain |
+| [Vercel AI SDK](https://github.com/vercel/ai) | ![](https://img.shields.io/github/stars/vercel/ai?style=flat-square) | TS toolkit for AI apps/agents with UI streaming |
+| [Mastra](https://github.com/mastra-ai/mastra) | ![](https://img.shields.io/github/stars/mastra-ai/mastra?style=flat-square) | TS agent framework — workflows, memory, RAG |
+| [VoltAgent](https://github.com/voltagent/voltagent) | ![](https://img.shields.io/github/stars/voltagent/voltagent?style=flat-square) | TS agent framework with built-in observability |
+| [OpenAI Agents JS](https://github.com/openai/openai-agents-js) | ![](https://img.shields.io/github/stars/openai/openai-agents-js?style=flat-square) | Official JS/TS Agents SDK |
+| [Inngest AgentKit](https://github.com/inngest/agent-kit) | ![](https://img.shields.io/github/stars/inngest/agent-kit?style=flat-square) | Multi-agent networks on durable workflows |
+
+## JVM (Java / Kotlin)
+
+| Framework | Stars | What it is |
+| --- | --- | --- |
+| [LangChain4j](https://github.com/langchain4j/langchain4j) | ![](https://img.shields.io/github/stars/langchain4j/langchain4j?style=flat-square) | LangChain for Java |
+| [Spring AI](https://github.com/spring-projects/spring-ai) | ![](https://img.shields.io/github/stars/spring-projects/spring-ai?style=flat-square) | Spring-native AI/agent framework |
+| [Google ADK (Java)](https://github.com/google/adk-java) | ![](https://img.shields.io/github/stars/google/adk-java?style=flat-square) | Agent Development Kit for the JVM |
+
+## Go
+
+| Framework | Stars | What it is |
+| --- | --- | --- |
+| [Eino](https://github.com/cloudwego/eino) | ![](https://img.shields.io/github/stars/cloudwego/eino?style=flat-square) | Go LLM/agent framework (CloudWeGo · ByteDance) |
+| [Genkit](https://github.com/firebase/genkit) | ![](https://img.shields.io/github/stars/firebase/genkit?style=flat-square) | Cross-language agent framework (Go/JS/Python, Google) |
+| [LangChainGo](https://github.com/tmc/langchaingo) | ![](https://img.shields.io/github/stars/tmc/langchaingo?style=flat-square) | LangChain for Go |
+
+## Rust
+
+| Framework | Stars | What it is |
+| --- | --- | --- |
+| [Rig](https://github.com/0xPlaygrounds/rig) | ![](https://img.shields.io/github/stars/0xPlaygrounds/rig?style=flat-square) | Rust framework for LLM-powered agents |
+
+## Coding agents
+
+| Framework | Stars | What it is |
+| --- | --- | --- |
+| [OpenHands](https://github.com/All-Hands-AI/OpenHands) | ![](https://img.shields.io/github/stars/All-Hands-AI/OpenHands?style=flat-square) | Autonomous software-engineering agents (formerly OpenDevin) |
+| [Aider](https://github.com/Aider-AI/aider) | ![](https://img.shields.io/github/stars/Aider-AI/aider?style=flat-square) | AI pair programming in your terminal |
+| [SWE-agent](https://github.com/SWE-agent/SWE-agent) | ![](https://img.shields.io/github/stars/SWE-agent/SWE-agent?style=flat-square) | Agents that resolve real GitHub issues (Princeton) |
+| [gpt-engineer](https://github.com/gpt-engineer-org/gpt-engineer) | ![](https://img.shields.io/github/stars/gpt-engineer-org/gpt-engineer?style=flat-square) | Build codebases from a natural-language prompt |
+| [Potpie](https://github.com/potpie-ai/potpie) | ![](https://img.shields.io/github/stars/potpie-ai/potpie?style=flat-square) | Custom engineering agents for your codebase |
+
+## Browser & computer use
+
+| Framework | Stars | What it is |
+| --- | --- | --- |
+| [Browser Use](https://github.com/browser-use/browser-use) | ![](https://img.shields.io/github/stars/browser-use/browser-use?style=flat-square) | Let agents drive a real browser |
+| [Skyvern](https://github.com/Skyvern-AI/skyvern) | ![](https://img.shields.io/github/stars/Skyvern-AI/skyvern?style=flat-square) | Automate browser workflows with LLMs + vision |
+| [Stagehand](https://github.com/browserbase/stagehand) | ![](https://img.shields.io/github/stars/browserbase/stagehand?style=flat-square) | AI browser automation (Browserbase) |
+
+## Voice & real-time
+
+| Framework | Stars | What it is |
+| --- | --- | --- |
+| [Pipecat](https://github.com/pipecat-ai/pipecat) | ![](https://img.shields.io/github/stars/pipecat-ai/pipecat?style=flat-square) | Real-time voice & multimodal agents |
+| [LiveKit Agents](https://github.com/livekit/agents) | ![](https://img.shields.io/github/stars/livekit/agents?style=flat-square) | Realtime voice/video agents over WebRTC |
+| [Parlant](https://github.com/emcie-co/parlant) | ![](https://img.shields.io/github/stars/emcie-co/parlant?style=flat-square) | Controllable, guideline-driven conversational agents |
+
+## Agent infrastructure (tools · memory · sandboxes)
+
+| Project | Stars | What it is |
+| --- | --- | --- |
+| [Composio](https://github.com/ComposioHQ/composio) | ![](https://img.shields.io/github/stars/ComposioHQ/composio?style=flat-square) | Tooling/integration layer — hundreds of tools for agents |
+| [E2B](https://github.com/e2b-dev/E2B) | ![](https://img.shields.io/github/stars/e2b-dev/E2B?style=flat-square) | Secure cloud sandboxes for AI code execution |
+| [Mem0](https://github.com/mem0ai/mem0) | ![](https://img.shields.io/github/stars/mem0ai/mem0?style=flat-square) | Memory layer for agents |
+| [Semantic Router](https://github.com/aurelio-labs/semantic-router) | ![](https://img.shields.io/github/stars/aurelio-labs/semantic-router?style=flat-square) | Fast routing/decision layer for agents |
+
+---
+
+### Adding an entry
+
+1. Drop the framework in the most fitting section (keep rows roughly ordered by relevance).
+2. Link the name to the GitHub repo: `[Name](https://github.com/<owner>/<repo>)`.
+3. Add the live star badge: `![](https://img.shields.io/github/stars/<owner>/<repo>?style=flat-square)`.
+> **Stars are dynamic.** Each badge is a [shields.io](https://shields.io) query
+> against the GitHub API (`img.shields.io/github/stars/<owner>/<repo>`), so counts
+> refresh on every page view — no manual updates needed. Moved repos resolve through
+> GitHub's redirect.
+Categories overlap — a framework is listed once, in its primary home.
